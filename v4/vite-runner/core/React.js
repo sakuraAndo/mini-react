@@ -30,37 +30,49 @@ function render(el, container) {
       children: [el],
     },
   };
+  root = nextUnitOfWork;
 }
 
+let root = null;
 let nextUnitOfWork = null;
-
 function workLoop(IdleDeadline) {
   let shouldYield = false;
   while (!shouldYield && nextUnitOfWork) {
-    nextUnitOfWork = performUnitOfWork(nextUnitOfWork);
+    nextUnitOfWork = performWorkUnit(nextUnitOfWork);
     shouldYield = IdleDeadline.timeRemaining() < 1;
+  }
+
+  if (!nextUnitOfWork) {
+    commitWork(root.child);
   }
   requestIdleCallback(workLoop);
 }
 
-function performUnitOfWork(work) {
-  if (!work.dom) {
-    const dom = (work.dom =
-      work.type === 'TEXT_ELEMENT'
-        ? document.createTextNode('')
-        : document.createElement(work.type));
+function commitWork(work) {
+  if (!work) return;
+  work.parent.dom.append(work.dom);
+  commitWork(work.child);
+  commitWork(work.sibling);
+}
 
-    work.parent.dom.append(dom);
+function getDom(type) {
+  return type === 'TEXT_ELEMENT'
+    ? document.createTextNode('')
+    : document.createElement(type);
+}
 
-    Object.keys(work.props).forEach((key) => {
-      if (key !== 'children') {
-        dom[key] = work.props[key];
-      }
-    });
-  }
-  let preChild = null;
+function updateProps(dom, props) {
+  Object.keys(props).forEach((key) => {
+    if (key !== 'children') {
+      dom[key] = props[key];
+    }
+  });
+}
+
+function initChild(work) {
+  let preDom = null;
   work.props.children.forEach((child, index) => {
-    let newWork = {
+    const newWork = {
       type: child.type,
       props: child.props,
       child: null,
@@ -72,10 +84,23 @@ function performUnitOfWork(work) {
     if (index === 0) {
       work.child = newWork;
     } else {
-      preChild.sibling = newWork;
+      preDom.sibling = newWork;
     }
-    preChild = newWork;
+    preDom = newWork;
   });
+}
+
+function performWorkUnit(work) {
+  if (!work.dom) {
+    const dom = (work.dom = getDom(work.type));
+
+    // work.parent.dom.append(dom);
+
+    updateProps(dom, work.props);
+  }
+
+  initChild(work);
+
   if (work.child) {
     return work.child;
   }
