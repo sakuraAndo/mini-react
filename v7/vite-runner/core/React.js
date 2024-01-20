@@ -1,4 +1,4 @@
-// update dom 
+// delete dom
 function createTextNode(text) {
   return {
     type: 'TEXT_ELEMENT',
@@ -37,10 +37,15 @@ function render(el, container) {
 let root = null;
 let currentRoot = null;
 let nextWorkOfUnit = null;
+let wipFiber = null;
+let deletions = [];
 function workLoop(deadline) {
   let shouldYield = false;
   while (!shouldYield && nextWorkOfUnit) {
     nextWorkOfUnit = performWorkOfUnit(nextWorkOfUnit);
+    if (root?.sibling?.type === nextWorkOfUnit?.type) {
+      nextWorkOfUnit = undefined
+    }
 
     shouldYield = deadline.timeRemaining() < 1;
   }
@@ -52,10 +57,30 @@ function workLoop(deadline) {
   requestIdleCallback(workLoop);
 }
 
+function commitDeletion(fiber) {
+  // fiber.parent.dom.remove(fiber.dom);
+  if (fiber.dom) {
+    //方法1 因为可能是函数式组件内部的 dom，其 parent 不存在，因此需要递归向上寻找
+    // let fiberParent = fiber.parent
+    // // 如果父级没有 dom 函数值组件
+    // while (!fiberParent.dom) {
+    //   fiberParent = fiberParent.parent
+    // }
+    // fiberParent.dom.removeChild(fiber.dom)
+    // 方法2 调用 dom.remove 方法 将节点从其所属 DOM 树中删除
+    fiber.dom.remove();
+  } else {
+    // 没有 dom 元素即函数式组件，则处理其 child
+    commitDeletion(fiber.child);
+  }
+}
+
 function commitRoot() {
+  deletions.forEach(commitDeletion);
   commitWork(root.child);
   currentRoot = root;
   root = null;
+  deletions = [];
 }
 
 function commitWork(fiber) {
@@ -129,16 +154,20 @@ function initChildren(fiber, children) {
         effectTag: 'update',
       };
     } else {
-      newFiber = {
-        type: child.type,
-        props: child.props,
-        child: null,
-        parent: fiber,
-        sibling: null,
-        dom: null,
-        alternate: OldFiber,
-        effectTag: 'placement',
-      };
+      if (child) {
+        newFiber = {
+          type: child.type,
+          props: child.props,
+          child: null,
+          parent: fiber,
+          sibling: null,
+          dom: null,
+          effectTag: 'placement',
+        };
+      }
+      if (OldFiber) {
+        deletions.push(OldFiber);
+      }
     }
 
     if (OldFiber) {
@@ -150,11 +179,20 @@ function initChildren(fiber, children) {
     } else {
       prevChild.sibling = newFiber;
     }
-    prevChild = newFiber;
+    if (newFiber) {
+      prevChild = newFiber;
+    }
   });
+
+  while (OldFiber) {
+    deletions.push(OldFiber);
+
+    OldFiber = OldFiber.sibling;
+  }
 }
 
 function updateFunctionComponent(fiber) {
+  wipFiber = fiber;
   const children = [fiber.type(fiber.props)];
 
   initChildren(fiber, children);
@@ -193,13 +231,15 @@ function performWorkOfUnit(fiber) {
 }
 
 function update() {
-  nextWorkOfUnit = {
-    dom: currentRoot.dom,
-    props: currentRoot.props,
-    alternate: currentRoot,
+  const currentFiber = wipFiber;
+  return () => {
+    console.log(currentFiber);
+    nextWorkOfUnit = {
+      ...currentFiber,
+      alternate: currentFiber,
+    };
+    root = nextWorkOfUnit;
   };
-
-  root = nextWorkOfUnit;
 }
 
 requestIdleCallback(workLoop);
